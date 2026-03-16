@@ -161,14 +161,14 @@ for i, (tab, asin) in enumerate(zip(tabs, products)):
         if not sr.empty:
             fig_sr = px.line(
                 sr, x="date", y="sales_rank",
-                title="Sales Rank (BSR) — plus c'est bas, mieux c'est",
+                title="Sales Rank (BSR) — lower is better",
                 color_discrete_sequence=["#FF9900"],
                 height=220,
             )
-            fig_sr.update_yaxes(autorange="reversed", title="Rang (meilleur en haut)")
-            fig_sr.update_xaxes(title="")
+            fig_sr.update_yaxes(autorange="reversed", title="Rank (lower = better)")
+            fig_sr.update_xaxes(title="Date")
             fig_sr.add_annotation(
-                text="Meilleur rang",
+                text="Best rank",
                 xref="paper", yref="paper",
                 x=0.01, y=0.95,
                 showarrow=False,
