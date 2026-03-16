@@ -49,36 +49,28 @@ def extract_series(series_data, value_divisor=100):
     return s
 
 def load_asins_from_excel(file, country: str) -> pd.DataFrame:
-    """
-    Load ASINs from Excel listing file for a given country tab.
-    Returns DataFrame with columns: asin, sku, availability
-    Skips rows with missing ASIN.
-    """
     try:
-        df = pd.read_excel(file, sheet_name=country, header=1)
+        df = pd.read_excel(file, sheet_name=country, header=1, engine='calamine')
     except Exception as e:
         raise ValueError(f"Could not read sheet '{country}': {e}")
 
-    # Normalize column names
+    # Normalize column names to uppercase
     df.columns = [str(c).strip().upper() for c in df.columns]
 
-    # Find ASIN column
-    asin_col = next((c for c in df.columns if "ASIN" in c), None)
-    sku_col  = next((c for c in df.columns if "SKU" in c), None)
+    asin_col  = next((c for c in df.columns if "ASIN" in c and "AMAZON" not in c), None)
+    sku_col   = next((c for c in df.columns if "SKU" in c), None)
     avail_col = next((c for c in df.columns if "AVAIL" in c), None)
 
     if not asin_col:
         raise ValueError(f"No ASIN column found in sheet '{country}'")
 
     result = pd.DataFrame()
-    result["asin"] = df[asin_col].astype(str).str.strip()
-    result["sku"]  = df[sku_col].astype(str).str.strip() if sku_col else "N/A"
+    result["asin"]         = df[asin_col].astype(str).str.strip()
+    result["sku"]          = df[sku_col].astype(str).str.strip() if sku_col else "N/A"
     result["availability"] = df[avail_col].astype(str).str.strip() if avail_col else "N/A"
 
-    # Remove rows with missing/invalid ASINs
     result = result[result["asin"].str.match(r'^[A-Z0-9]{10}$')]
-    result = result.drop_duplicates(subset="asin")
-    result = result.reset_index(drop=True)
+    result = result.drop_duplicates(subset="asin").reset_index(drop=True)
 
     return result
 
