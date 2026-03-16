@@ -1,0 +1,5 @@
+keepa
+streamlit
+plotly
+pandas
+python-dotenv
