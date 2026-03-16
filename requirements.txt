@@ -3,3 +3,5 @@ streamlit
 plotly
 pandas
 python-dotenv
+openpyxl
+xlrd

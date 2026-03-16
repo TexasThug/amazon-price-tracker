@@ -7,11 +7,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DOMAINS = {
-    "Amazon.co.uk (UK)": "GB",
-    "Amazon.de (DE)":    "DE",
-    "Amazon.fr (FR)":    "FR",
-    "Amazon.it (IT)":    "IT",
-    "Amazon.es (ES)":    "ES",
+    "UK": "GB",
+    "DE": "DE",
+    "FR": "FR",
+    "IT": "IT",
+    "ES": "ES",
+}
+
+MARKETPLACE_LABELS = {
+    "UK": "Amazon.co.uk (UK)",
+    "DE": "Amazon.de (DE)",
+    "FR": "Amazon.fr (FR)",
+    "IT": "Amazon.it (IT)",
+    "ES": "Amazon.es (ES)",
 }
 
 def get_api():
@@ -37,13 +45,47 @@ def extract_series(series_data, value_divisor=100):
         [v / value_divisor if v > 0 else None for v in values],
         index=dates
     )
-    # Remove duplicates and sort index
     s = s[~s.index.duplicated(keep="last")].sort_index()
     return s
 
-def fetch_products(asins: list, domain_name: str) -> pd.DataFrame:
+def load_asins_from_excel(file, country: str) -> pd.DataFrame:
+    """
+    Load ASINs from Excel listing file for a given country tab.
+    Returns DataFrame with columns: asin, sku, availability
+    Skips rows with missing ASIN.
+    """
+    try:
+        df = pd.read_excel(file, sheet_name=country, header=1)
+    except Exception as e:
+        raise ValueError(f"Could not read sheet '{country}': {e}")
+
+    # Normalize column names
+    df.columns = [str(c).strip().upper() for c in df.columns]
+
+    # Find ASIN column
+    asin_col = next((c for c in df.columns if "ASIN" in c), None)
+    sku_col  = next((c for c in df.columns if "SKU" in c), None)
+    avail_col = next((c for c in df.columns if "AVAIL" in c), None)
+
+    if not asin_col:
+        raise ValueError(f"No ASIN column found in sheet '{country}'")
+
+    result = pd.DataFrame()
+    result["asin"] = df[asin_col].astype(str).str.strip()
+    result["sku"]  = df[sku_col].astype(str).str.strip() if sku_col else "N/A"
+    result["availability"] = df[avail_col].astype(str).str.strip() if avail_col else "N/A"
+
+    # Remove rows with missing/invalid ASINs
+    result = result[result["asin"].str.match(r'^[A-Z0-9]{10}$')]
+    result = result.drop_duplicates(subset="asin")
+    result = result.reset_index(drop=True)
+
+    return result
+
+
+def fetch_products(asins: list, country: str) -> pd.DataFrame:
     api = get_api()
-    domain_id = DOMAINS[domain_name]
+    domain_id = DOMAINS[country]
     products = api.query(asins, domain=domain_id, history=True, buybox=True)
 
     rows = []
@@ -62,6 +104,15 @@ def fetch_products(asins: list, domain_name: str) -> pd.DataFrame:
         new_prices    = extract_series(get_csv(1))
         buybox_prices = extract_series(get_csv(18))
         sales_rank    = extract_series(get_csv(3), value_divisor=1)
+
+        # OOS detection — check if stock available (csv index 11)
+        stock_data = get_csv(11)
+        is_oos = False
+        if stock_data and len(stock_data) >= 2:
+            last_stock = stock_data[-1]
+            is_oos = last_stock == 0
+        elif buybox_prices.empty and amazon_prices.empty:
+            is_oos = True
 
         all_dates = pd.date_range(
             start=datetime.now() - timedelta(days=180),
@@ -83,9 +134,10 @@ def fetch_products(asins: list, domain_name: str) -> pd.DataFrame:
                 df[col] = None
 
         df = df.reset_index()
-        df["asin"]   = asin
-        df["title"]  = title[:60] + "..." if len(title) > 60 else title
-        df["domain"] = domain_name
+        df["asin"]    = asin
+        df["title"]   = title[:60] + "..." if len(title) > 60 else title
+        df["country"] = country
+        df["is_oos"]  = is_oos
         rows.append(df)
 
     if not rows:
@@ -102,34 +154,55 @@ def get_summary(df: pd.DataFrame) -> pd.DataFrame:
 
     summary = []
     for asin, group in df.groupby("asin"):
-        title  = group["title"].iloc[0]
-        domain = group["domain"].iloc[0]
+        title   = group["title"].iloc[0]
+        country = group["country"].iloc[0]
+        is_oos  = group["is_oos"].iloc[0]
 
         bb = group["buy_box_price"].dropna()
         am = group["amazon_price"].dropna()
         price_series = bb if not bb.empty else am
 
         if price_series.empty:
-            continue
+            current = None
+            min_p = max_p = avg_p = drop_pct = None
+            alert = "⚫ NO DATA"
+        else:
+            current  = price_series.iloc[-1]
+            min_p    = price_series.min()
+            max_p    = price_series.max()
+            avg_p    = round(price_series.mean(), 2)
+            last_30  = price_series.iloc[-30:]
+            avg_30   = last_30.mean() if not last_30.empty else current
+            drop_pct = round((avg_30 - current) / avg_30 * 100, 1) if avg_30 else 0
 
-        current  = price_series.iloc[-1]
-        min_p    = price_series.min()
-        max_p    = price_series.max()
-        avg_p    = round(price_series.mean(), 2)
-        last_30  = price_series.iloc[-30:]
-        avg_30   = last_30.mean() if not last_30.empty else current
-        drop_pct = round((avg_30 - current) / avg_30 * 100, 1) if avg_30 else 0
+            if is_oos:
+                alert = "🔴 OOS"
+            elif drop_pct > 10:
+                alert = "🟡 PRICE DROP"
+            elif drop_pct < -10:
+                alert = "🔺 PRICE UP"
+            else:
+                alert = "🟢 STABLE"
 
         summary.append({
             "ASIN":          asin,
             "Product":       title,
-            "Marketplace":   domain,
-            "Current (£/€)": round(current, 2),
-            "Min (£/€)":     round(min_p, 2),
-            "Max (£/€)":     round(max_p, 2),
-            "Avg (£/€)":     avg_p,
-            "30d change %":  drop_pct,
-            "Alert":         "🔻 DROP" if drop_pct > 5 else ("🔺 UP" if drop_pct < -5 else "➡ STABLE"),
+            "Country":       country,
+            "Current (£/€)": round(current, 2) if current else "N/A",
+            "Min (£/€)":     round(min_p, 2) if min_p else "N/A",
+            "Max (£/€)":     round(max_p, 2) if max_p else "N/A",
+            "Avg (£/€)":     avg_p if avg_p else "N/A",
+            "30d change %":  drop_pct if drop_pct else 0,
+            "OOS":           is_oos,
+            "Alert":         alert,
         })
 
     return pd.DataFrame(summary)
+
+
+def get_alerts(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Return only products that need attention."""
+    if summary_df.empty:
+        return pd.DataFrame()
+    alerts = summary_df[summary_df["Alert"] != "🟢 STABLE"]
+    return alerts.sort_values("Alert")
