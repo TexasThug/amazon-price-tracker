@@ -156,16 +156,28 @@ for i, (tab, asin) in enumerate(zip(tabs, products)):
         st.plotly_chart(fig, use_container_width=True)
  
         # Sales rank sub-chart
+        # Sales rank sub-chart
         sr = product_df[["date", "sales_rank"]].dropna(subset=["sales_rank"])
         if not sr.empty:
-            fig_sr = px.area(
+            fig_sr = px.line(
                 sr, x="date", y="sales_rank",
-                title="Sales Rank (BSR)",
-                color_discrete_sequence=["#9B59B6"],
+                title="Sales Rank (BSR) — plus c'est bas, mieux c'est",
+                color_discrete_sequence=["#FF9900"],
                 height=220,
             )
-            fig_sr.update_yaxes(autorange="reversed")
-            fig_sr.update_layout(margin=dict(l=0, r=0, t=40, b=0))
+            fig_sr.update_yaxes(autorange="reversed", title="Rang (meilleur en haut)")
+            fig_sr.update_xaxes(title="")
+            fig_sr.add_annotation(
+                text="Meilleur rang",
+                xref="paper", yref="paper",
+                x=0.01, y=0.95,
+                showarrow=False,
+                font=dict(size=11, color="green")
+            )
+            fig_sr.update_layout(
+                margin=dict(l=0, r=0, t=40, b=0),
+                yaxis=dict(tickformat=",")
+            )
             st.plotly_chart(fig_sr, use_container_width=True)
  
 st.divider()
